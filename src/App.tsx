@@ -1,33 +1,74 @@
 import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import Database from "@tauri-apps/plugin-sql";
-import { Check, Plus, Trash2 } from 'lucide-react';
+import { Check, Plus, Trash2, LogOut } from 'lucide-react';
+import Auth from "./Auth";
 import "./App.css";
 
 interface Todo {
   id: number;
   text: string;
-  completed: number; // SQLite stores booleans as 0/1
+  completed: number;
+  user_id: number;
+}
+
+interface User {
+  id: number;
+  username: string;
 }
 
 function App() {
+  const [user, setUser] = useState<User | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTodo, setNewTodo] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
   const [db, setDb] = useState<Database | null>(null);
 
-  // Initialize database on mount
+  // Check for existing session on mount
   useEffect(() => {
+    async function checkAuth() {
+      try {
+        const currentUser = await invoke<User | null>('get_current_user');
+        if (currentUser) {
+          setUser(currentUser);
+        }
+      } catch (error) {
+        console.error('Failed to check auth:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    checkAuth();
+  }, []);
+
+  // Initialize database when user logs in
+  useEffect(() => {
+    if (!user) return;
+
     async function initDb() {
       try {
         const database = await Database.load("sqlite:todos.db");
         
-        // Create table if it doesn't exist
+        // Create users table if it doesn't exist
+        await database.execute(`
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+
+        // Create todos table with user_id
         await database.execute(`
           CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
             text TEXT NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
           )
         `);
         
@@ -38,22 +79,23 @@ function App() {
     }
     
     initDb();
-  }, []);
+  }, [user]);
 
   // Load todos when db is ready
   useEffect(() => {
-    if (db) {
+    if (db && user) {
       loadTodos();
     }
-  }, [db]);
+  }, [db, user]);
 
   const loadTodos = async (): Promise<void> => {
-    if (!db) return;
+    if (!db || !user) return;
     
     setLoading(true);
     try {
       const result = await db.select<Todo[]>(
-        "SELECT id, text, completed FROM todos ORDER BY created_at DESC"
+        "SELECT id, text, completed, user_id FROM todos WHERE user_id = $1 ORDER BY created_at DESC",
+        [user.id]
       );
       setTodos(result);
     } catch (error) {
@@ -65,19 +107,19 @@ function App() {
 
   const addTodo = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
-    if (!newTodo.trim() || !db) return;
+    if (!newTodo.trim() || !db || !user) return;
 
     try {
       const result = await db.execute(
-        "INSERT INTO todos (text, completed) VALUES ($1, 0)",
-        [newTodo]
+        "INSERT INTO todos (text, completed, user_id) VALUES ($1, 0, $2)",
+        [newTodo, user.id]
       );
       
-      // Add to local state
       const newTodoItem: Todo = {
         id: result.lastInsertId,
         text: newTodo,
         completed: 0,
+        user_id: user.id,
       };
       setTodos([newTodoItem, ...todos]);
       setNewTodo('');
@@ -114,18 +156,56 @@ function App() {
     }
   };
 
+  const handleLogout = async (): Promise<void> => {
+    try {
+      await invoke('logout_user');
+      setUser(null);
+      setTodos([]);
+      setDb(null);
+    } catch (error) {
+      console.error('Failed to logout:', error);
+    }
+  };
+
+  const handleAuthSuccess = (authenticatedUser: User) => {
+    setUser(authenticatedUser);
+  };
+
+  // Show loading state on initial load
+  if (loading && !user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 flex items-center justify-center">
+        <div className="text-slate-500">Loading...</div>
+      </div>
+    );
+  }
+
+  // Show auth screen if not logged in
+  if (!user) {
+    return <Auth onAuthSuccess={handleAuthSuccess} />;
+  }
+
   const activeTodos = todos.filter(t => !t.completed).length;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4 md:p-8">
       <div className="max-w-2xl mx-auto">
         {/* Header */}
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-slate-50 mb-2">
-            Todo
-          </h1>
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-2">
+            <h1 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-slate-50">
+              Todo
+            </h1>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-sm">Logout</span>
+            </button>
+          </div>
           <p className="text-slate-600 dark:text-slate-400">
-            {activeTodos} {activeTodos === 1 ? 'task' : 'tasks'} remaining
+            Welcome, {user.username} • {activeTodos} {activeTodos === 1 ? 'task' : 'tasks'} remaining
           </p>
         </div>
 
