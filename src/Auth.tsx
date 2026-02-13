@@ -1,19 +1,13 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import Database from "@tauri-apps/plugin-sql";
-import { User, Lock } from 'lucide-react';
+// src/Auth.tsx
 
-interface AuthResponse {
-  success: boolean;
-  message: string;
-  user?: {
-    id: number;
-    username: string;
-  };
-}
+import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import Database from '@tauri-apps/plugin-sql';
+import { User, Lock } from 'lucide-react';
+import { User as UserType, AuthResponse } from './types';
 
 interface AuthProps {
-  onAuthSuccess: (user: { id: number; username: string }) => void;
+  onAuthSuccess: (user: UserType) => void;
 }
 
 export default function Auth({ onAuthSuccess }: AuthProps) {
@@ -39,26 +33,26 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       const passwordHash = response.message; // Hash is in message field
 
       // Store user in database
-      const db = await Database.load("sqlite:todos.db");
-      
+      const db = await Database.load('sqlite:todos.db');
+
       // Check if username already exists
       const existing = await db.select<Array<{ id: number }>>(
-        "SELECT id FROM users WHERE username = $1",
+        'SELECT id FROM users WHERE username = $1',
         [username]
       );
 
       if (existing.length > 0) {
-        setError("Username already exists");
+        setError('Username already exists');
         return;
       }
 
       // Insert new user
       const result = await db.execute(
-        "INSERT INTO users (username, password_hash) VALUES ($1, $2)",
+        'INSERT INTO users (username, password_hash) VALUES ($1, $2)',
         [username, passwordHash]
       );
 
-      const newUser = {
+      const newUser: UserType = {
         id: result.lastInsertId,
         username,
       };
@@ -78,16 +72,15 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
 
   const handleLogin = async () => {
     try {
-      const db = await Database.load("sqlite:todos.db");
-      
+      const db = await Database.load('sqlite:todos.db');
+
       // Find user by username
-      const users = await db.select<Array<{ id: number; username: string; password_hash: string }>>(
-        "SELECT id, username, password_hash FROM users WHERE username = $1",
-        [username]
-      );
+      const users = await db.select<
+        Array<{ id: number; username: string; password_hash: string }>
+      >('SELECT id, username, password_hash FROM users WHERE username = $1', [username]);
 
       if (users.length === 0) {
-        setError("Invalid username or password");
+        setError('Invalid username or password');
         return;
       }
 
@@ -100,7 +93,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       });
 
       if (!isValid) {
-        setError("Invalid username or password");
+        setError('Invalid username or password');
         return;
       }
 
@@ -204,7 +197,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               disabled={loading}
               className="w-full py-3 px-4 bg-slate-900 dark:bg-slate-50 text-white dark:text-slate-900 rounded-lg hover:bg-slate-800 dark:hover:bg-slate-200 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Please wait...' : (isLogin ? 'Sign In' : 'Create Account')}
+              {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Create Account'}
             </button>
           </form>
 
@@ -216,7 +209,9 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               }}
               className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             >
-              {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+              {isLogin
+                ? "Don't have an account? Sign up"
+                : 'Already have an account? Sign in'}
             </button>
           </div>
         </div>
